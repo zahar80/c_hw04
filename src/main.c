@@ -8,6 +8,17 @@
 #include "http.h"
 #include "parson.h"
 
+enum result {
+    SUCCESS,
+    ERROR_INPUT,
+    ERROR_ARGS,
+    ERROR_ALLOC,
+    ERROR_PARSE,
+    ERROR_CURL,
+    ERROR_COPY,
+    ERROR_NO_DATA
+};
+
 struct weather {
     char* weather_state_name;
     char* wind_direction_compass;
@@ -16,24 +27,53 @@ struct weather {
     double wind_speed;
 };
 
-static void exit_program(const char* error) {
-    fprintf(stderr, "%s\n", error);
+static void exit_program(enum result r) {
+    switch (r) {
+        case ERROR_INPUT:
+            fprintf(stderr, "Input must contain the location name\n");
+            break;
+        case ERROR_ARGS:
+            fprintf(stderr, "Bad function arguments\n");
+            break;
+        case ERROR_ALLOC:
+            fprintf(stderr, "Can not allocate memory\n");
+            break;
+        case ERROR_COPY:
+            fprintf(stderr, "Can not copy string\n");
+            break;
+        case ERROR_PARSE:
+            fprintf(stderr, "Json parse error\n");
+            break;
+        case ERROR_CURL:
+            fprintf(stderr, "Weather api connection error\n");
+            break;
+        case ERROR_NO_DATA:
+            fprintf(stderr, "Weather api contains no data\n");
+            break;
+        default:
+            fprintf(stderr, "Uknown error\n");
+    }
     exit(1);
 }
 
-unsigned long int parse_location(const char* raw_string) {
+enum result parse_location(const char* raw_string, unsigned long* woeid_p) {
+    assert(raw_string && woeid_p);
+    if (!raw_string || !woeid_p) {
+        return ERROR_ARGS;
+    }
+
     JSON_Value* root_value = json_parse_string(raw_string);
     assert(json_value_get_type(root_value) == JSONArray);
     if (json_value_get_type(root_value) != JSONArray) {
         json_value_free(root_value);
-        return 0;
+        return ERROR_PARSE;
     }
 
     JSON_Array* locations = json_value_get_array(root_value);
     assert(locations);
     if (!locations) {
         json_value_free(root_value);
-        return 0;
+        return ERROR_PARSE;
     }
 
     json_value_free(root_value);
@@ -41,37 +81,43 @@ unsigned long int parse_location(const char* raw_string) {
     size_t count = json_array_get_count(locations);
     assert(count);
     if (!count) {
-        return 0;
+        return ERROR_NO_DATA;
     }
 
     JSON_Object* location = json_array_get_object(locations, 0);
     assert(location);
     if (!location) {
-        return 0;
+        return ERROR_PARSE;
     }
 
     const long int woeid = json_object_get_number(location, "woeid");
     assert(woeid);
     if (!woeid) {
-        return 0;
+        return ERROR_PARSE;
     }
 
-    return woeid;
+    *woeid_p = woeid;
+    return SUCCESS;
 }
 
-struct weather* parse_weather(const char* raw_string) {
+enum result parse_weather(const char* raw_string, struct weather* weather) {
+    assert(raw_string && weather);
+    if (!raw_string || !weather) {
+        return ERROR_ARGS;
+    }
+
     JSON_Value *root_value = json_parse_string(raw_string);
     assert(json_value_get_type(root_value) == JSONObject);
     if (json_value_get_type(root_value) != JSONObject) {
         json_value_free(root_value);
-        return NULL;
+        return ERROR_PARSE;
     }
 
     JSON_Object* weather_object = json_value_get_object(root_value);
     assert(weather_object);
     if (!weather_object) {
         json_value_free(root_value);
-        return NULL;
+        return ERROR_PARSE;
     }
 
     json_value_free(root_value);
@@ -79,61 +125,42 @@ struct weather* parse_weather(const char* raw_string) {
     JSON_Array* consolidated_weather = json_object_get_array(weather_object, "consolidated_weather");
     assert(consolidated_weather);
     if (!consolidated_weather) {
-        return NULL;
+        return ERROR_PARSE;
     }
 
     size_t count = json_array_get_count(consolidated_weather);
     assert(count);
     if (!count) {
-        return NULL;
+        return ERROR_NO_DATA;
     }
 
     JSON_Object* first_weather_object = json_array_get_object(consolidated_weather, 0);
     assert(first_weather_object);
     if (!first_weather_object) {
-        return NULL;
+        return ERROR_PARSE;
     }
 
     const char* weather_state_name = json_object_get_string(first_weather_object, "weather_state_name");
-    assert(weather_state_name);
     const char* wind_direction_compass = json_object_get_string(first_weather_object, "wind_direction_compass");
-    assert(wind_direction_compass);
+    assert(weather_state_name && wind_direction_compass);
+    if (!weather_state_name || !wind_direction_compass) {
+        return ERROR_PARSE;
+    }
+
     double min_temp = json_object_get_number(first_weather_object, "min_temp");
     double max_temp = json_object_get_number(first_weather_object, "max_temp");
     double wind_speed = json_object_get_number(first_weather_object, "wind_speed");
 
-    if (!weather_state_name || !wind_direction_compass) {
-        return NULL;
-    }
-
-    struct weather* weather = malloc(sizeof(struct weather));
-    assert(weather);
-    if (!weather) {
-        return NULL;
-    }
-
     char* weather_sn = malloc(strlen(weather_state_name) + 1);
-    assert(weather_sn);
-    if (!weather_sn) {
-        free(weather);
-        return NULL;
-    }
-    if (!strcpy(weather_sn, weather_state_name)) {
-        free(weather);
-        free(weather_sn);
-        return NULL;
-    }
-
     char* weather_wd = malloc(strlen(wind_direction_compass) + 1);
-    assert(weather_wd);
-    if (!weather_wd) {
-        free(weather);
-        return NULL;
-    };
-    if (!strcpy(weather_wd, wind_direction_compass)) {
-        free(weather);
+    assert(weather_sn && weather_wd);
+    if (!weather_sn || !weather_wd) {
+        return ERROR_ALLOC;
+    }
+    if (!strcpy(weather_sn, weather_state_name) || !strcpy(weather_wd, wind_direction_compass)) {
+        free(weather_sn);
         free(weather_wd);
-        return NULL;
+        return ERROR_COPY;
     }
 
     weather->weather_state_name = weather_sn;
@@ -142,19 +169,21 @@ struct weather* parse_weather(const char* raw_string) {
     weather->max_temp = max_temp;
     weather->wind_speed = wind_speed;
 
-    return weather;
+    return SUCCESS;
 }
 
 void weather_free(struct weather* weather) {
-    if (weather) {
-        if (weather->weather_state_name) free(weather->weather_state_name);
-        if (weather->wind_direction_compass) free(weather->wind_direction_compass);
-        free(weather);
+    if (!weather) {
+        return;
     }
+    if (weather->weather_state_name) free(weather->weather_state_name);
+    if (weather->wind_direction_compass) free(weather->wind_direction_compass);
 }
 
 void weather_print(struct weather* weather) {
-    printf("weather print");
+    if (!weather) {
+        return;
+    }
     printf(
         "Weather: %s, wind direction: %s, wind speed: %.2f, min temperature: %.2f, max temperature: %.2f\n",
         weather->weather_state_name,
@@ -167,9 +196,10 @@ void weather_print(struct weather* weather) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        exit_program("Args must contain the location");
+        exit_program(ERROR_INPUT);
     }
 
+    enum result result;
     char* response = NULL;
     char* url = NULL;
 
@@ -178,7 +208,7 @@ int main(int argc, char** argv) {
     url = malloc(query_needed);
     assert(url);
     if (!url) {
-        exit_program("Can not allocate memory for url");
+        exit_program(ERROR_ALLOC);
     }
     sprintf(url, query_template, argv[1]);
 
@@ -186,16 +216,17 @@ int main(int argc, char** argv) {
     assert(response);
     if (!response) {
         free(url);
-        exit_program("Can not get response from weather service");
+        exit_program(ERROR_CURL);
     }
 
     free(url);
 
-    unsigned long int woeid = parse_location(response);
-    assert(woeid);
-    if (!woeid) {
+    unsigned long int woeid;
+    result = parse_location(response, &woeid);
+    assert(result == SUCCESS);
+    if (result != SUCCESS) {
         free(response);
-        exit_program("Can not parse the location response");
+        exit_program(result);
     }
 
     free(response);
@@ -205,7 +236,7 @@ int main(int argc, char** argv) {
     url = malloc(city_needed);
     assert(url);
     if (!url) {
-        exit_program("Can not allocate memory for url");
+        exit_program(ERROR_ALLOC);
     }
     sprintf(url, city_template, woeid);
     
@@ -213,23 +244,24 @@ int main(int argc, char** argv) {
     assert(response);
     if (!response) {
         free(url);
-        exit_program("Can not get response from weather service");
+        exit_program(ERROR_CURL);
     }
 
     free(url);
 
-    struct weather* weather = parse_weather(response);
-    assert(weather);
-    if (!weather) {
+    struct weather weather;
+    result = parse_weather(response, &weather);
+    assert(result == SUCCESS);
+    if (result != SUCCESS) {
         free(response);
-        exit_program("Can not parse the weather response");
+        exit_program(result);
     }
 
     free(response);
 
-    weather_print(weather);
+    weather_print(&weather);
 
-    weather_free(weather);
+    weather_free(&weather);
 
     return 0;
 }
