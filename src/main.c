@@ -56,7 +56,7 @@ static void exit_program(enum result r) {
     exit(1);
 }
 
-enum result parse_location(const char* raw_string, unsigned long* woeid_p) {
+static enum result parse_location(const char* raw_string, unsigned long* woeid_p) {
     assert(raw_string && woeid_p);
     if (!raw_string || !woeid_p) {
         return ERROR_ARGS;
@@ -104,7 +104,7 @@ enum result parse_location(const char* raw_string, unsigned long* woeid_p) {
     return SUCCESS;
 }
 
-enum result parse_weather(const char* raw_string, struct weather* weather) {
+static enum result parse_weather(const char* raw_string, struct weather* weather) {
     assert(raw_string && weather);
     if (!raw_string || !weather) {
         return ERROR_ARGS;
@@ -182,7 +182,7 @@ enum result parse_weather(const char* raw_string, struct weather* weather) {
     return SUCCESS;
 }
 
-void weather_free(struct weather* weather) {
+static void weather_free(struct weather* weather) {
     if (!weather) {
         return;
     }
@@ -190,7 +190,7 @@ void weather_free(struct weather* weather) {
     free(weather->wind_direction_compass);
 }
 
-void weather_print(struct weather* weather) {
+static void weather_print(struct weather* weather) {
     if (!weather) {
         return;
     }
