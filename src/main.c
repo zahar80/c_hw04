@@ -76,25 +76,29 @@ enum result parse_location(const char* raw_string, unsigned long* woeid_p) {
         return ERROR_PARSE;
     }
 
-    json_value_free(root_value);
 
     size_t count = json_array_get_count(locations);
     assert(count);
     if (!count) {
+        json_value_free(root_value);
         return ERROR_NO_DATA;
     }
 
     JSON_Object* location = json_array_get_object(locations, 0);
     assert(location);
     if (!location) {
+        json_value_free(root_value);
         return ERROR_PARSE;
     }
 
     const long int woeid = json_object_get_number(location, "woeid");
     assert(woeid);
     if (!woeid) {
+        json_value_free(root_value);
         return ERROR_PARSE;
     }
+
+    json_value_free(root_value);
 
     *woeid_p = woeid;
     return SUCCESS;
@@ -120,23 +124,24 @@ enum result parse_weather(const char* raw_string, struct weather* weather) {
         return ERROR_PARSE;
     }
 
-    json_value_free(root_value);
-
     JSON_Array* consolidated_weather = json_object_get_array(weather_object, "consolidated_weather");
     assert(consolidated_weather);
     if (!consolidated_weather) {
+        json_value_free(root_value);
         return ERROR_PARSE;
     }
 
     size_t count = json_array_get_count(consolidated_weather);
     assert(count);
     if (!count) {
+        json_value_free(root_value);
         return ERROR_NO_DATA;
     }
 
     JSON_Object* first_weather_object = json_array_get_object(consolidated_weather, 0);
     assert(first_weather_object);
     if (!first_weather_object) {
+        json_value_free(root_value);
         return ERROR_PARSE;
     }
 
@@ -144,6 +149,7 @@ enum result parse_weather(const char* raw_string, struct weather* weather) {
     const char* wind_direction_compass = json_object_get_string(first_weather_object, "wind_direction_compass");
     assert(weather_state_name && wind_direction_compass);
     if (!weather_state_name || !wind_direction_compass) {
+        json_value_free(root_value);
         return ERROR_PARSE;
     }
 
@@ -155,13 +161,17 @@ enum result parse_weather(const char* raw_string, struct weather* weather) {
     char* weather_wd = malloc(strlen(wind_direction_compass) + 1);
     assert(weather_sn && weather_wd);
     if (!weather_sn || !weather_wd) {
+        json_value_free(root_value);
         return ERROR_ALLOC;
     }
     if (!strcpy(weather_sn, weather_state_name) || !strcpy(weather_wd, wind_direction_compass)) {
+        json_value_free(root_value);
         free(weather_sn);
         free(weather_wd);
         return ERROR_COPY;
     }
+
+    json_value_free(root_value);
 
     weather->weather_state_name = weather_sn;
     weather->wind_direction_compass = weather_wd;
@@ -176,8 +186,8 @@ void weather_free(struct weather* weather) {
     if (!weather) {
         return;
     }
-    if (weather->weather_state_name) free(weather->weather_state_name);
-    if (weather->wind_direction_compass) free(weather->wind_direction_compass);
+    free(weather->weather_state_name);
+    free(weather->wind_direction_compass);
 }
 
 void weather_print(struct weather* weather) {

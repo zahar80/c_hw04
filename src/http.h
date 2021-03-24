@@ -1,3 +1,3 @@
 #pragma once
 
-char* do_request(const char* ulr);
+char* do_request(const char* url);
